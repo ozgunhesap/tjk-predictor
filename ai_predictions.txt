@@ -1,0 +1,69 @@
+
+======================================================
+ GENERATING AI PREDICTIONS FOR: 21/02/2026
+======================================================
+
+
+--- Adana RACES ---
+Race: 1. 15.00 | 1900m Kum
+   1. VICTOR THE BRAVE (5) (2.04.85)
+   2. FRANKI CHA CHA (1) (2.06.43)
+   3. MERT KHAN (6) (2.09.80)
+Race: 2. 15.30 | 2000m Kum
+   1. LAMAZİ GOGO (7) (2.12.74)
+   2. MAJESTIC HOLIDAY (3) (2.14.41)
+   3. BIG FORTUNA (1) (2.14.76)
+Race: 3. 16.00 | 1900m Kum
+   1. TURAN YILDIZI (1) (2.17.57)
+   2. YAMAÇ RÜZGARI (5) (2.18.01)
+   3. CAZGIR YAŞAR (2) (2.18.08)
+Race: 4. 16.30 | 1900m Kum
+   1. SER DAĞYUDAN (3) (2.14.40)
+   2. CEVAHİRKAN (4) (2.15.98)
+   3. MUHLİF BABA (1) (2.16.10)
+Race: 5. 17.00 | 1400m Kum
+   1. SUPERBELLA (1) (1.25.66)
+   2. RİYAKAR (2) (1.26.11)
+   3. HALLELUKA (3) (1.26.13)
+Race: 6. 17.30 | 1900m Kum
+   1. NAZİKO (1) (2.17.70)
+   2. PAKELİF (3) (2.18.23)
+   3. IRMAK SU (2) (2.18.36)
+Race: 7. 18.00 | 1400m Kum
+   1. PRINCESS BALA (3) (1.30.97)
+   2. KAPLAN ATEŞİ (6) (1.31.27)
+   3. WINNING DRAGON (2) (1.31.32)
+
+--- İstanbul RACES ---
+Race: 1. 17.15 | 1500m Sentetik
+   1. BAY UMUT (1) (1.41.96)
+   2. EFSANE HANIM (6) (1.42.09)
+   3. TULPARIM (7) (1.42.55)
+Race: 2. 17.45 | 1500m Sentetik
+   1. THE SPECIAL ONE (4) (1.34.38)
+   2. DIVINE GIFT (6) (1.34.54)
+   3. RAKEL (3) (1.34.57)
+Race: 4. 19.00 | 2000m Sentetik
+   1. ÇELİKGİLLER (1) (2.16.87)
+   2. TANJU BEY (3) (2.17.34)
+   3. BALDER (4) (2.17.69)
+Race: 5. 19.30 | 1500m Sentetik
+   1. LİSENDORA (2) (1.34.13)
+   2. HEAVEN LIGHT (3) (1.34.32)
+   3. SWEET LADY (4) (1.34.71)
+Race: 6. 20.00 | 1400m Sentetik
+   1. LAZFATİH (1) (1.32.95)
+   2. KİMSESİZ BABA (5) (1.33.01)
+   3. AZAPKAPI (4) (1.33.29)
+Race: 7. 20.30 | 1400m Sentetik
+   1. INEVITABLE (1) (1.22.33)
+   2. MAKE A FIRE (2) (1.22.45)
+   3. MAGIC SELECTRA (6) (1.22.56)
+Race: 8. 21.00 | 2000m Sentetik
+   1. I AM INVINCIBLE (7) (2.02.76)
+   2. CAPE COD (3) (2.04.54)
+   3. JIMDEMA (2) (2.04.93)
+Race: 9. 21.30 | 1500m Sentetik
+   1. VANTABELLA (1) (1.34.72)
+   2. TIMETEX (2) (1.35.01)
+   3. ICE DROPS (3) (1.35.10)
