@@ -293,7 +293,7 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-zinc-100 font-sans p-6 md:p-12">
-      <header className="max-w-6xl mx-auto mb-12 flex items-center justify-between">
+      <header className="max-w-6xl mx-auto mb-8 flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
         <div>
           <h1 className="text-4xl font-extrabold tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-cyan-400">
             TJK Predictor
@@ -303,7 +303,7 @@ export default function Home() {
             AI-Powered Race Projections
           </p>
         </div>
-        <div className="flex bg-zinc-900 border border-zinc-800 rounded-lg overflow-hidden p-1">
+        <div className="flex w-full md:w-auto overflow-x-auto scrollbar-hide bg-zinc-900 border border-zinc-800 rounded-lg p-1 whitespace-nowrap">
           <button
             onClick={() => setTargetDateLabel('past3')}
             className={`flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${targetDateLabel === 'past3' ? 'bg-emerald-500/20 text-emerald-400' : 'text-zinc-400 hover:text-zinc-200'}`}
