@@ -231,10 +231,13 @@ export function predictRaceTime(
             const classEffect = (1.0 - historicalClassStrength) * 0.02;
             adjustedPace = adjustedPace * (1 - classEffect);
 
-            // Sprint-to-Route Stamina Tax (Softened)
-            // Reduced penalty from 1.5% to 0.5% to prevent double-dipping with global Distance Affinity
-            if (race.distance < 1500 && currentDistance >= 1500) {
-                adjustedPace = adjustedPace * 1.005; 
+            // Proportional Fatigue Scaling (Üstel Yorgunluk Çarpanı)
+            // Penalty scales with the distance jump. 
+            // 1% pace penalty for every 1000m increase from the historical baseline.
+            if (currentDistance > race.distance) {
+                const distanceJump = currentDistance - race.distance;
+                const fatigueMultiplier = 1.0 + (distanceJump / 1000) * 0.01;
+                adjustedPace = adjustedPace * fatigueMultiplier;
             }
 
             // 2. City Track Correlation: Different cities have different track qualities affecting speed.
@@ -268,7 +271,9 @@ export function predictRaceTime(
 
             if (targetWeight > 0 && pastWeight > 0) {
                 const weightDiff = targetWeight - pastWeight;
-                const weightPaceEffect = weightDiff * 0.000075;
+                // Scale weight penalty by distance - carrying weight is harder over long distances
+                const distanceScale = currentDistance / 1400;
+                const weightPaceEffect = (weightDiff * 0.000075) * distanceScale;
                 adjustedPace += weightPaceEffect;
             }
 
@@ -338,8 +343,12 @@ export function predictRaceTime(
             conditionRatio = Math.max(0.99, Math.min(1.01, conditionRatio));
             adjustedPace = adjustedPace * conditionRatio;
 
-            // Weight recent races higher
-            const weight = 5 - index; // 5, 4, 3, 2, 1
+            // 6. Time-Decay Weighting (Zaman-Bazlı Ağırlıklandırma)
+            // Replace fixed 5-4-3-2-1 with inverse time decay formula
+            // Weight decreases as the race gets older, significantly favoring recent form.
+            const raceDateMs = parseDateStr(race.date);
+            const daysSinceRace = raceDateMs > 0 ? (targetTimeMs - raceDateMs) / (1000 * 60 * 60 * 24) : 60;
+            const weight = 1 / (1 + (Math.max(0, daysSinceRace) / 45));
 
             totalWeightedPace += adjustedPace * weight;
             totalWeight += weight;
