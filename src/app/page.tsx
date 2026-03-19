@@ -135,7 +135,7 @@ export default function Home() {
 
         // 2. Fetch predictions in parallel if distance and trackType exist
         if (race.distance && race.trackType) {
-          fetchPredictionsForHorses(data.horses, race.distance, race.trackType, dateQuery, selectedLocation.name);
+          fetchPredictionsForHorses(data.horses, race.distance, race.trackType, dateQuery, selectedLocation.name, race);
         } else {
           setIsLoadingPredictions(false);
         }
@@ -147,7 +147,7 @@ export default function Home() {
     }
   };
 
-  const fetchPredictionsForHorses = async (horseList: Horse[], distance: number, trackType: string, date: string, city: string) => {
+  const fetchPredictionsForHorses = async (horseList: Horse[], distance: number, trackType: string, date: string, city: string, race: Race) => {
     const newPredictions: Record<string, Prediction> = {};
     const allHistories: Record<string, any[]> = {};
 
