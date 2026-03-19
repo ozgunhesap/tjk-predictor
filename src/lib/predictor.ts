@@ -5,6 +5,8 @@ export interface PredictionResult {
     predictedTimeStr: string | null;
     confidence: number; // 0-100 based on relevant races
     relevantRacesCount: number;
+    h2hAdjustments?: { horseName: string, adjustment: number }[]; // Track H2H wins
+    classQualityScore?: number; // 0-100 score of historical race quality
 }
 
 // timeStr format: "1.26.42" or "2.09.88" (minutes.seconds.hundredths)
@@ -51,6 +53,35 @@ const CITY_SPEED_INDEX: Record<string, number> = {
     "Kocaeli": 1.01
 };
 
+const CLASS_STRENGTH: Record<string, number> = {
+    "G1": 1.00,
+    "G2": 0.98,
+    "G3": 0.96,
+    "A3": 0.95,
+    "KV-9": 0.94,
+    "KV-8": 0.93,
+    "KV-7": 0.92,
+    "KV-6": 0.91,
+    "Handikap-17": 0.90,
+    "Handikap-16": 0.88,
+    "Handikap-15": 0.86,
+    "ŞARTLI 5": 0.85,
+    "ŞARTLI 4": 0.83,
+    "ŞARTLI 3": 0.81,
+    "ŞARTLI 2": 0.78,
+    "Maiden": 0.75,
+    "Şartlı 1": 0.75
+};
+
+const getClassStrength = (className: string | undefined): number => {
+    if (!className) return 0.80; // Default
+    const upper = className.toUpperCase();
+    for (const key in CLASS_STRENGTH) {
+        if (upper.includes(key.toUpperCase())) return CLASS_STRENGTH[key];
+    }
+    return 0.80;
+};
+
 export function predictRaceTime(
     history: PastRace[],
     currentDistance: number,
@@ -63,26 +94,55 @@ export function predictRaceTime(
     currentSire?: string,
     currentTrainer?: string,
     currentDraw?: number,
-    currentHandicap?: number
+    currentHandicap?: number,
+    otherHorsesRaces?: Record<string, PastRace[]>, // For H2H
+    currentRaceName?: string // For Class Drop
 ): PredictionResult {
-    // Helper to parse DD/MM/YYYY into a Date object for safe comparison
+    // Helper to parse DD/MM/YYYY or DD.MM.YYYY into a Date object for safe comparison
     const parseDateStr = (dStr: string) => {
         if (!dStr) return 0;
-        const pts = dStr.split(/[\/\.]/);
+        const pts = dStr.trim().split(/[\/\.]/);
         if (pts.length === 3) {
-            return new Date(parseInt(pts[2]), parseInt(pts[1]) - 1, parseInt(pts[0])).getTime();
+            const day = parseInt(pts[0], 10);
+            const month = parseInt(pts[1], 10);
+            const year = parseInt(pts[2], 10);
+            if (isNaN(day) || isNaN(month) || isNaN(year)) return 0;
+            // Use local noon to avoid DST/timezone edge cases during date-only comparison
+            return new Date(year, month - 1, day, 12, 0, 0).getTime();
         }
         return 0;
     };
 
     const targetTimeMs = targetDate ? parseDateStr(targetDate) : 0;
-    if (!history || history.length === 0) {
+    // console.log(`[Predictor] Target Date: ${targetDate} -> ${targetTimeMs}`);
+
+    // --- 0. DATA ISOLATION (Strict Pre-Race) ---
+    const filterPastOnly = (raceList: PastRace[], label: string) => {
+        if (targetTimeMs === 0) return raceList;
+        return raceList.filter(race => {
+            if (!race.date) return true;
+            const rMs = parseDateStr(race.date);
+            const isPast = rMs < targetTimeMs;
+            // if (!isPast) console.log(`[Predictor] EXCLUDING race from ${label}: ${race.date} (${rMs}) >= Target (${targetTimeMs})`);
+            return isPast;
+        });
+    };
+
+    const historyAtTargetMoment = filterPastOnly(history, "MainHorse");
+    const otherHorsesHistoryAtTargetMoment: Record<string, PastRace[]> = {};
+    if (otherHorsesRaces) {
+        for (const [name, races] of Object.entries(otherHorsesRaces)) {
+            otherHorsesHistoryAtTargetMoment[name] = filterPastOnly(races, name);
+        }
+    }
+
+    if (!historyAtTargetMoment || historyAtTargetMoment.length === 0) {
         return { predictedSeconds: null, predictedTimeStr: null, confidence: 0, relevantRacesCount: 0 };
     }
 
     // Determine horse breed/type generically by historical speed base. 
     // Arab horses are naturally slower (Pace > 0.066 sec/m) than English horses.
-    const overallAvgHistoryPace = history.length > 0 ? (parseTime(history[0].time) / history[0].distance) : 0.068;
+    const overallAvgHistoryPace = historyAtTargetMoment.length > 0 ? (parseTime(historyAtTargetMoment[0].time) / historyAtTargetMoment[0].distance) : 0.068;
     const isArabHorse = overallAvgHistoryPace > 0.066;
 
     // Track categorization: Turf and Synthetic are grouped together. Dirt is isolated.
@@ -98,16 +158,17 @@ export function predictRaceTime(
 
     const filterValidRaces = (raceList: PastRace[], requireExactTrack: boolean) => {
         return raceList.filter(race => {
-            if (targetTimeMs > 0 && race.date) {
-                const raceTimeMs = parseDateStr(race.date);
-                if (raceTimeMs >= targetTimeMs) return false;
-            }
+            // NOTE: Date filtering has been moved to the top (historyAtTargetMoment) 
+            // for global consistency across all prediction sub-logics (H2H, quality, etc).
+
             if (race.city && (race.city.toLowerCase().includes('şanlıurfa') || race.city.toLowerCase().includes('diyarbakır'))) return false;
 
             const isSimilarDistance = Math.abs(race.distance - currentDistance) <= maxDistanceDiff;
             const isValidTime = race.time && race.time !== "Derecesiz" && race.time.includes('.');
 
-            if (!isSimilarDistance || !isValidTime) return false;
+            if (!isSimilarDistance || !isValidTime) {
+                return false;
+            }
 
             if (requireExactTrack) {
                 return race.trackType === currentTrackType;
@@ -120,13 +181,13 @@ export function predictRaceTime(
         });
     };
 
-    let relevantRaces = filterValidRaces(history, true); // Strict exact match first
+    let relevantRaces = filterValidRaces(historyAtTargetMoment, true); // Strict exact match first
     let usedBucketFallback = false;
 
     // 2. FALLBACK: If not enough exact track races, fallback to the REST OF THE BUCKET
     // e.g. Target is Turf, fallback to Synthetic. Target is Dirt, no fallback available.
     if (relevantRaces.length < 2) {
-        const bucketRaces = filterValidRaces(history, false);
+        const bucketRaces = filterValidRaces(historyAtTargetMoment, false);
         if (bucketRaces.length > relevantRaces.length) {
             relevantRaces = bucketRaces;
             usedBucketFallback = true;
@@ -149,30 +210,64 @@ export function predictRaceTime(
         const seconds = parseTime(race.time);
         if (seconds > 0) {
             let basePace = seconds / race.distance; // historical seconds per meter
+            
+            // Outlier Anomaly Cap (Ignore paces where horse walked/injured)
+            // Arab threshold ~0.088, English threshold ~0.075
+            const maxPace = isArabHorse ? 0.085 : 0.072;
+            if (basePace > maxPace) {
+                basePace = maxPace; // Cap it so it doesn't destroy the average
+            }
 
-            // 1. Distance Corellation: Longer races have slower pace, shorter races have faster pace.
+            // 1. Distance Correlation: Longer races have slower pace, shorter races have faster pace.
             // Assumption: Every 1 meter of distance change affects pace by 0.000006 seconds/meter
             const distanceDiff = currentDistance - race.distance;
             const distancePaceEffect = distanceDiff * 0.000006;
             let adjustedPace = basePace + distancePaceEffect;
 
-            // NEW: Sprint-to-Route Stamina Tax
-            // If the historical race was a Sprint (<1500m) and the target race is a Route (>=1500m),
-            // the linear distance indexing is not enough. The horse will hit an aerobic wall.
+            // NEW: Race Class Weighting (Qualitative)
+            // A horse performing well in a G1 is more "efficient" than in a Maiden.
+            const historicalClassStrength = getClassStrength(race.raceClass);
+            // Reduced heuristical weight from 0.05 to 0.02 to prevent double-dipping with final Class Drop logic
+            const classEffect = (1.0 - historicalClassStrength) * 0.02;
+            adjustedPace = adjustedPace * (1 - classEffect);
+
+            // Sprint-to-Route Stamina Tax (Softened)
+            // Reduced penalty from 1.5% to 0.5% to prevent double-dipping with global Distance Affinity
             if (race.distance < 1500 && currentDistance >= 1500) {
-                adjustedPace = adjustedPace * 1.015; // 1.5% pace penalty for sudden aerobic demand
+                adjustedPace = adjustedPace * 1.005; 
             }
 
             // 2. City Track Correlation: Different cities have different track qualities affecting speed.
             const pastCityIndex = CITY_SPEED_INDEX[race.city] || 1.0;
-            const cityAdjustmentRatio = currentCityIndex / pastCityIndex;
+            let cityAdjustmentRatio = currentCityIndex / pastCityIndex;
+            // Cap city extreme variances to max +/- 1.5% to prevent field spreading
+            cityAdjustmentRatio = Math.max(0.985, Math.min(1.015, cityAdjustmentRatio));
             adjustedPace = adjustedPace * cityAdjustmentRatio;
 
             // 3. Weight Correlation: Carrying more weight slows the horse down.
             // Heuristic: 1kg difference = 0.000075 seconds per meter reduction in pace.
             // Example: +5kg difference over 2000m adds roughly 0.75 seconds.
-            if (currentWeight !== undefined && race.weight > 0) {
-                const weightDiff = currentWeight - race.weight;
+            const parseWeight = (w: any): number => {
+                if (typeof w === 'number') return w;
+                if (typeof w === 'string') {
+                    // Handle "55+1.50Fazla Kilo" or "55,5"
+                    const clean = w.replace(',', '.');
+                    const match = clean.match(/(\d+(\.\d+)?)/);
+                    if (match) {
+                        const base = parseFloat(match[1]);
+                        const extraMatch = clean.match(/\+(\d+(\.\d+)?)/);
+                        const extra = extraMatch ? parseFloat(extraMatch[1]) : 0;
+                        return base + extra;
+                    }
+                }
+                return 0;
+            };
+
+            const targetWeight = parseWeight(currentWeight);
+            const pastWeight = parseWeight(race.weight);
+
+            if (targetWeight > 0 && pastWeight > 0) {
+                const weightDiff = targetWeight - pastWeight;
                 const weightPaceEffect = weightDiff * 0.000075;
                 adjustedPace += weightPaceEffect;
             }
@@ -187,7 +282,7 @@ export function predictRaceTime(
                 let pastCount = 0;
                 let currentCount = 0;
 
-                history.forEach(h => {
+                historyAtTargetMoment.forEach(h => {
                     const secs = parseTime(h.time);
                     if (secs > 0) {
                         const pace = secs / h.distance;
@@ -213,8 +308,8 @@ export function predictRaceTime(
                     personalRatio = currentSpeed / pastSpeed;
                 }
 
-                // Capping the conversion impact so it never blows up a prediction by more than 4%
-                personalRatio = Math.max(0.96, Math.min(1.04, personalRatio));
+                // Capping the conversion impact so it never blows up a prediction by more than 1.5%
+                personalRatio = Math.max(0.985, Math.min(1.015, personalRatio));
 
                 adjustedPace = adjustedPace * personalRatio;
             }
@@ -239,8 +334,8 @@ export function predictRaceTime(
             const pastCondFactor = getConditionFactor(race.condition);
             let conditionRatio = currentCondFactor / pastCondFactor;
 
-            // Cap extreme condition swings to +/- 2% max
-            conditionRatio = Math.max(0.98, Math.min(1.02, conditionRatio));
+            // Cap extreme condition swings to +/- 1% max
+            conditionRatio = Math.max(0.99, Math.min(1.01, conditionRatio));
             adjustedPace = adjustedPace * conditionRatio;
 
             // Weight recent races higher
@@ -265,9 +360,10 @@ export function predictRaceTime(
     // At 2400m (~155s), this deducts ~0.77 seconds.
     predictedSeconds = predictedSeconds * 0.995;
 
-    // --- SECONDARY HEURISTICS (HARD CAPPED TO +/- 0.5 SECONDS TOTAL) ---
-    // The user requested to bring back all minor variables but prevent them from overwhelming the core distance/pace math.
-    let totalTimeModifier = 0; // in seconds
+    // --- SECONDARY HEURISTICS (PROPORTIONAL / PERCENTAGE BASED) ---
+    // Instead of using a hard-capped flat 0.5s modifier, we use a ratio (multiplier) applied to the total time.
+    // This scales appropriately with the race distance (e.g. 1.0% of 120s is 1.2s, 1.0% of 60s is 0.6s).
+    let totalPaceModifierRatio = 1.0;
 
     // 6. Handicap/Class Correlation (Kalite Puanı)
     if (currentHandicap !== undefined && currentHandicap > 0 && relevantRaces[0] && relevantRaces[0].handicap !== undefined && relevantRaces[0].handicap > 0) {
@@ -284,8 +380,8 @@ export function predictRaceTime(
         if (histHandicapCount > 0) {
             const avgHistHandicap = histHandicapSum / histHandicapCount;
             const handicapDiff = currentHandicap - avgHistHandicap;
-            // 1 Handikap point = 0.05 seconds advantage. Max +/- 0.5 sec limit will be applied at the end.
-            totalTimeModifier -= (handicapDiff * 0.05);
+            // 1 Handikap point = 0.02% advantage
+            totalPaceModifierRatio -= (handicapDiff * 0.0002);
         }
     }
 
@@ -301,16 +397,16 @@ export function predictRaceTime(
         });
 
         if (racesWithJockey >= 3 && (winWithJockey / racesWithJockey) >= 0.33) {
-            totalTimeModifier -= 0.15; // Synergy Bonus (Fast)
+            totalPaceModifierRatio -= 0.003; // 0.3% Synergy Bonus (Fast)
         } else if (racesWithJockey >= 5 && winWithJockey === 0) {
-            totalTimeModifier += 0.15; // Synergy Penalty (Slow)
+            totalPaceModifierRatio += 0.003; // 0.3% Synergy Penalty (Slow)
         }
     }
 
     // 8. Apranti Penalty
     // Inexperienced jockeys (Aprantis) lack the strength for the final sprint or make tactical errors.
     if (currentJockey && currentJockey.includes('ap')) {
-        totalTimeModifier += 0.15; // Inexperience Penalty
+        totalPaceModifierRatio += 0.004; // 0.4% Inexperience Penalty
     }
 
     // 9. Rest Days (Dinlenme / Yorgunluk)
@@ -319,56 +415,154 @@ export function predictRaceTime(
         const daysSinceLastRace = (targetTimeMs - lastRaceTimeMs) / (1000 * 60 * 60 * 24);
 
         if (daysSinceLastRace < 7) {
-            totalTimeModifier += 0.20; // Fatigue penalty (Slow)
+            totalPaceModifierRatio += 0.005; // 0.5% Fatigue penalty (Slow)
         } else if (daysSinceLastRace > 90) {
-            totalTimeModifier += 0.25; // Rust/Fitness penalty (Slow)
+            totalPaceModifierRatio += 0.010; // 1.0% Rust/Fitness penalty (Slow)
         } else if (daysSinceLastRace >= 14 && daysSinceLastRace <= 28) {
-            totalTimeModifier -= 0.05; // Peak fitness bonus (Fast) (Normalized)
+            totalPaceModifierRatio -= 0.003; // 0.3% Peak fitness bonus (Fast)
         }
     }
 
-    // 10. Pedigree / Sire Bonus (Aygır Genetiği)
+    // 10. Recent Form (Güncel Form)
+    // Analyze the horse's most recent starts to penalize out-of-form horses
+    if (historyAtTargetMoment.length >= 2) {
+        let poorFinishes = 0;
+        let recentWins = 0;
+        // Take up to 3 most recent races
+        const recentFormRaces = historyAtTargetMoment.slice(0, 3);
+        
+        recentFormRaces.forEach(r => {
+            if (r.position > 4 || r.position === 0) poorFinishes++;
+            if (r.position === 1) recentWins++;
+        });
+
+        // If the horse failed to place top 4 in all of its recent starts, apply a moderate penalty
+        if (poorFinishes === recentFormRaces.length) {
+            totalPaceModifierRatio += 0.010; // 1.0% Penalty for terrible recent form
+        } else if (recentWins > 0) {
+            totalPaceModifierRatio -= 0.003; // 0.3% Bonus for winning recently
+        }
+    }
+
+    // 11. Pedigree / Sire Bonus (Aygır Genetiği)
     if (currentSire) {
         const lowerSire = currentSire.toLowerCase();
         // Give a slight genetic bonus if the sire is a known Champion producer
-        const championSires = ['luxor', 'kaneKo', 'victory gallop', 'turbo', 'özgünhan', 'ayabakan'];
+        const championSires = ['luxor', 'kaneko', 'victory gallop', 'turbo', 'özgünhan', 'ayabakan'];
         if (championSires.some(s => lowerSire.includes(s))) {
-            totalTimeModifier -= 0.05; // Normalized
+            totalPaceModifierRatio -= 0.0015; 
         } else {
-            totalTimeModifier += 0.05; // Baseline normalization tax for standard sires
+            totalPaceModifierRatio += 0.0015; 
         }
     }
 
-    // 11. Trainer Form
-    // Since we don't have a backend DB tracking all trainer wins, we just give a slight bump to universally elite trainers
+    // 12. Trainer Form
     if (currentTrainer) {
         const lowerTrainer = currentTrainer.toLowerCase();
         const eliteTrainers = ['b.turgul', 'h.yüzbaşı', 'ş.çelik', 'm.korkmaz', 's.boyraz'];
         if (eliteTrainers.some(t => lowerTrainer.includes(t))) {
-            totalTimeModifier -= 0.05; // Normalized
+            totalPaceModifierRatio -= 0.0015; 
         } else {
-            totalTimeModifier += 0.05; // Baseline normalization tax for standard trainers
+            totalPaceModifierRatio += 0.0015; 
         }
     }
 
-    // 12. Draw Bias (Kulvar Avantajı)
+    // 13. Draw Bias (Kulvar Avantajı)
     if (currentDraw !== undefined && currentDraw > 0) {
         if (currentDistance <= 1400) {
             // Sprints heavily favor inside gates (1-4)
-            if (currentDraw <= 3) totalTimeModifier -= 0.10; // Inside advantage
-            if (currentDraw >= 10) totalTimeModifier += 0.15; // Wide disadvantage
+            if (currentDraw <= 3) totalPaceModifierRatio -= 0.002; // Inside advantage
+            if (currentDraw >= 10) totalPaceModifierRatio += 0.003; // Wide disadvantage
         } else if (currentDistance >= 1900) {
             // Long routes can be bad for gate 1 (getting boxed in)
-            if (currentDraw === 1 || currentDraw === 2) totalTimeModifier += 0.05;
+            if (currentDraw === 1 || currentDraw === 2) totalPaceModifierRatio += 0.0015;
+        }
+    }
+
+    // 14. Class Drop / Hike (Sınıf Düşme / Çıkma)
+    if (currentRaceName && history.length > 0) {
+        const currentClassStrength = getClassStrength(currentRaceName);
+        let histClassSum = 0;
+        let validRacesCount = 0;
+        history.forEach(r => {
+            const rStrength = getClassStrength(r.raceClass);
+            if (rStrength > 0) {
+                histClassSum += rStrength;
+                validRacesCount++;
+            }
+        });
+        if (validRacesCount > 0) {
+            const avgHistClassStr = histClassSum / validRacesCount;
+            const classDiff = avgHistClassStr - currentClassStrength;
+            
+            // If historical quality is better (higher), this is a class drop -> horse is superior to opponents
+            // Softened multiplier from 0.05 to 0.02 to prevent extreme outliers
+            if (classDiff > 0.05) { 
+                totalPaceModifierRatio -= classDiff * 0.02; 
+            } else if (classDiff < -0.05) {
+                // Class hike -> horse may be out of depth
+                totalPaceModifierRatio += Math.abs(classDiff) * 0.02;
+            }
+        }
+    }
+
+    // 15. Distance Affinity (Mesafe Yatkınlığı)
+    let maxDistanceProven = 0;
+    history.forEach(r => {
+        // Proven stamina if horse finished in Top 3
+        if (r.position >= 1 && r.position <= 3) {
+            if (r.distance > maxDistanceProven) {
+                maxDistanceProven = r.distance;
+            }
+        }
+    });
+
+    if (maxDistanceProven > 0) {
+        // Softened Stamina Checks
+        if (currentDistance > maxDistanceProven + 200) {
+            totalPaceModifierRatio += 0.003; // 0.3% stamina penalty (softened from 0.5%)
+        } else if (currentDistance <= maxDistanceProven) {
+            // Proven at this distance or longer
+            totalPaceModifierRatio -= 0.001; // 0.1% stamina bonus (softened from 0.2%)
         }
     }
 
     // --- CLAMP TOTAL SECONDARY HEURISTICS MODIFIER ---
-    // User requested absolute limit: Maximum +/- 0.5 seconds impact from all secondary factors combined!
-    totalTimeModifier = Math.max(-0.50, Math.min(0.50, totalTimeModifier));
+    // Protect against runaway multipliers. Cap exactly at +/- 1.5% globally.
+    // In a 100s race (approx 1500m), max penalty stacked up is 1.5 seconds.
+    // In a 150s race (approx 2400m), max penalty stacked up is 2.25 seconds.
+    totalPaceModifierRatio = Math.max(0.985, Math.min(1.015, totalPaceModifierRatio));
 
     // Apply final modifier to predicted time
-    predictedSeconds += totalTimeModifier;
+    predictedSeconds = predictedSeconds * totalPaceModifierRatio;
+
+    // --- 13. HEAD-TO-HEAD (H2H) RELATIONAL ANALYSIS ---
+    const h2hAdjustments: { horseName: string, adjustment: number }[] = [];
+    if (otherHorsesHistoryAtTargetMoment) {
+        for (const [otherHorseName, otherRaces] of Object.entries(otherHorsesHistoryAtTargetMoment)) {
+            let winCount = 0;
+            let lossCount = 0;
+
+            relevantRaces.forEach(myRace => {
+                if (!myRace.raceId) return;
+                const sharedRace = otherRaces.find(r => r.raceId === myRace.raceId);
+                if (sharedRace) {
+                    if (myRace.position < sharedRace.position) winCount++;
+                    else if (myRace.position > sharedRace.position) lossCount++;
+                }
+            });
+
+            if (winCount > lossCount) {
+                const adj = -0.15 * (winCount - lossCount);
+                predictedSeconds += adj;
+                h2hAdjustments.push({ horseName: otherHorseName, adjustment: adj });
+            } else if (lossCount > winCount) {
+                const adj = 0.15 * (lossCount - winCount);
+                predictedSeconds += adj;
+                h2hAdjustments.push({ horseName: otherHorseName, adjustment: adj });
+            }
+        }
+    }
 
     let confidence = (relevantRaces.length / 5) * 100;
 
@@ -390,6 +584,8 @@ export function predictRaceTime(
         predictedSeconds,
         predictedTimeStr: formatTime(predictedSeconds),
         confidence,
-        relevantRacesCount: relevantRaces.length
+        relevantRacesCount: relevantRaces.length,
+        h2hAdjustments,
+        classQualityScore: Math.round(relevantRaces.reduce((acc, r) => acc + getClassStrength(r.raceClass), 0) / relevantRaces.length * 100)
     };
 }

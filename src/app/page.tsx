@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { MapPin, Clock, Trophy, ChevronRight, Activity, CalendarDays, X } from 'lucide-react';
+import Link from 'next/link';
 
 interface Location {
   id: string;
@@ -36,6 +37,8 @@ interface Prediction {
   predictedTimeStr: string | null;
   confidence: number;
   relevantRacesCount: number;
+  h2hAdjustments?: { horseName: string, adjustment: number }[];
+  classQualityScore?: number;
 }
 
 export default function Home() {
@@ -146,17 +149,59 @@ export default function Home() {
 
   const fetchPredictionsForHorses = async (horseList: Horse[], distance: number, trackType: string, date: string, city: string) => {
     const newPredictions: Record<string, Prediction> = {};
+    const allHistories: Record<string, any[]> = {};
 
+    // 1. Fetch all histories first (for H2H)
     await Promise.all(
       horseList.map(async (horse) => {
         try {
-          const res = await fetch(`/api/horse?horseId=${horse.id}&distance=${distance}&trackType=${encodeURIComponent(trackType)}&date=${encodeURIComponent(date)}&city=${encodeURIComponent(city)}&weight=${encodeURIComponent(horse.weight)}&jockey=${encodeURIComponent(horse.jockey)}&sire=${encodeURIComponent(horse.sire || '')}&trainer=${encodeURIComponent(horse.trainer || '')}&draw=${horse.draw || ''}&handicap=${horse.handicap || ''}`);
+          const res = await fetch(`/api/horse?horseId=${horse.id}`);
+          const data = await res.json();
+          if (data.history) allHistories[horse.name] = data.history;
+        } catch (e) { }
+      })
+    );
+
+    // 2. Fetch predictions with H2H awareness (POST)
+    await Promise.all(
+      horseList.map(async (horse) => {
+        try {
+          const horseHistory = allHistories[horse.name];
+          if (!horseHistory) return;
+
+          // Minimize otherRaces to reduce payload size
+          const otherRacesMin: Record<string, any[]> = {};
+          Object.entries(allHistories).forEach(([name, hist]) => {
+            if (name === horse.name) return;
+            otherRacesMin[name] = hist.map(r => ({ raceId: r.raceId, position: r.position, date: r.date }));
+          });
+
+          const res = await fetch('/api/predict', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              history: horseHistory,
+              distance,
+              trackType,
+              date,
+              city,
+              weight: horse.weight,
+              jockey: horse.jockey,
+              sire: horse.sire || '',
+              trainer: horse.trainer || '',
+              draw: horse.draw ? (Number(horse.draw) || undefined) : undefined,
+              handicap: horse.handicap ? (Number(horse.handicap) || undefined) : undefined,
+              otherRaces: otherRacesMin,
+              raceName: race.name
+            })
+          });
+
           const data = await res.json();
           if (data.prediction) {
             newPredictions[horse.id] = data.prediction;
           }
         } catch (e) {
-          // Ignore individual errors
+          console.error("Prediction loop error:", e);
         }
       })
     );
@@ -191,7 +236,7 @@ export default function Home() {
     const dateQuery = getFormattedDate(targetDateLabel);
 
     // 1. Fetch all horses and predictions for these 6 races
-    const raceData: { race: Race, horses: (Horse & { pred: Prediction })[] }[] = [];
+    const raceData: { race: Race, horses: (Horse & { pred: Prediction })[], riskFactor: number }[] = [];
 
     for (let i = 0; i < altiliRaces.length; i++) {
       const r = altiliRaces[i];
@@ -205,10 +250,53 @@ export default function Home() {
         const horsesWithPreds: (Horse & { pred: Prediction })[] = [];
 
         if (r.distance && r.trackType) {
-          // Fetch predictions concurrently for the race
+          const allHistories: Record<string, any[]> = {};
+
+          setTicketProgress({ current: i + 1, total: 6, text: `${r.number}. Koşu: Geçmiş veriler taranıyor...` });
           await Promise.all(horseList.map(async (horse) => {
             try {
-              const pRes = await fetch(`/api/horse?horseId=${horse.id}&distance=${r.distance}&trackType=${encodeURIComponent(r.trackType || '')}&date=${encodeURIComponent(dateQuery)}&city=${encodeURIComponent(selectedLocation.name)}&weight=${encodeURIComponent(horse.weight)}&jockey=${encodeURIComponent(horse.jockey)}&sire=${encodeURIComponent(horse.sire || '')}&trainer=${encodeURIComponent(horse.trainer || '')}&draw=${horse.draw || ''}`);
+              const res = await fetch(`/api/horse?horseId=${horse.id}`);
+              const data = await res.json();
+              if (data.history) allHistories[horse.name] = data.history;
+            } catch (e) { }
+          }));
+
+          setTicketProgress({ current: i + 1, total: 6, text: `${r.number}. Koşu: H2H Analizi ve Tahminler...` });
+          // Fetch predictions concurrently for the race (POST)
+          await Promise.all(horseList.map(async (horse) => {
+            try {
+              const horseHistory = allHistories[horse.name];
+              if (!horseHistory) {
+                horsesWithPreds.push({ ...horse, pred: { predictedSeconds: null, predictedTimeStr: null, confidence: 0, relevantRacesCount: 0 } });
+                return;
+              }
+
+              const otherRacesMin: Record<string, any[]> = {};
+              Object.entries(allHistories).forEach(([name, hist]) => {
+                if (name === horse.name) return;
+                otherRacesMin[name] = hist.map(rh => ({ raceId: rh.raceId, position: rh.position, date: rh.date }));
+              });
+
+              const pRes = await fetch('/api/predict', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  history: horseHistory,
+                  distance: r.distance,
+                  trackType: r.trackType,
+                  date: dateQuery,
+                  city: selectedLocation.name,
+                  weight: horse.weight,
+                  jockey: horse.jockey,
+                  sire: horse.sire || '',
+                  trainer: horse.trainer || '',
+                  draw: horse.draw ? (Number(horse.draw) || undefined) : undefined,
+                  handicap: horse.handicap ? (Number(horse.handicap) || undefined) : undefined,
+                  otherRaces: otherRacesMin,
+                  raceName: r.name
+                })
+              });
+
               const pData = await pRes.json();
               horsesWithPreds.push({ ...horse, pred: pData.prediction || { predictedSeconds: null, predictedTimeStr: null, confidence: 0, relevantRacesCount: 0 } });
             } catch (e) {
@@ -227,7 +315,15 @@ export default function Home() {
           return parseInt(a.number) - parseInt(b.number);
         });
 
-        raceData.push({ race: r, horses: sorted });
+        // 1.5 Calculate Risk Factor for this race
+        const missingDataCount = horsesWithPreds.filter(h => !h.pred.predictedSeconds).length;
+        const totalCount = horsesWithPreds.length;
+        const topConfidence = sorted[0]?.pred.confidence || 0;
+
+        // Risk = (Percentage of unknown horses) + (Low confidence of the top pick)
+        const riskFactor = (totalCount > 0 ? (missingDataCount / totalCount) : 0) + ((100 - topConfidence) / 100);
+
+        raceData.push({ race: r, horses: sorted, riskFactor });
       } catch (e) {
         console.error(e);
       }
@@ -243,24 +339,31 @@ export default function Home() {
 
       while (true) {
         let bestLegIndex = -1;
-        let smallestTimeDeficit = Infinity;
+        let smallestAdjustedDeficit = Infinity;
 
         for (let i = 0; i < 6; i++) {
           const nextHorseIndex = picks[i];
-          const horsesInLeg = raceData[i].horses;
+          const legData = raceData[i];
+          const horsesInLeg = legData.horses;
           if (nextHorseIndex >= horsesInLeg.length) continue;
 
           const nextHorse = horsesInLeg[nextHorseIndex];
           const topHorse = horsesInLeg[0];
 
-          const timeDiff = nextHorse.pred.predictedSeconds
+          // Base time difference
+          let timeDiff = nextHorse.pred.predictedSeconds
             ? (nextHorse.pred.predictedSeconds - (topHorse.pred.predictedSeconds || 0))
             : 999;
 
+          // RISK-AWARE ADJUSTMENT:
+          // If a race has high 'riskFactor' (missing data or low top confidence), 
+          // we artificially SHRINK the timeDiff so the algorithm is more likely to add more horses to this race.
+          const adjustedDiff = timeDiff / (1 + (legData.riskFactor * 0.8)); // 0.8 is the "sensitivity" to risk
+
           const newCombinations = (currentCombinations / picks[i]) * (picks[i] + 1);
           if (newCombinations <= maxCombinations) {
-            if (timeDiff < smallestTimeDeficit) {
-              smallestTimeDeficit = timeDiff;
+            if (adjustedDiff < smallestAdjustedDeficit) {
+              smallestAdjustedDeficit = adjustedDiff;
               bestLegIndex = i;
             }
           }
@@ -268,7 +371,7 @@ export default function Home() {
 
         if (bestLegIndex === -1) break;
 
-        currentCombinations = (currentCombinations / bestLegIndex) ? ((currentCombinations / picks[bestLegIndex]) * (picks[bestLegIndex] + 1)) : currentCombinations + 1;
+        currentCombinations = (currentCombinations / picks[bestLegIndex]) * (picks[bestLegIndex] + 1);
         picks[bestLegIndex]++;
       }
 
@@ -331,6 +434,14 @@ export default function Home() {
             <Activity className="w-4 h-4" />
             Yarın
           </button>
+          <div className="w-px bg-zinc-800 mx-1"></div>
+          <Link
+            href="/evaluate"
+            className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-md transition-colors bg-violet-500/10 text-violet-400 hover:bg-violet-500/20"
+          >
+            <Trophy className="w-4 h-4" />
+            Geçmiş Değerlendirmesi
+          </Link>
         </div>
       </header>
 
@@ -426,6 +537,52 @@ export default function Home() {
                   <div className="text-2xl font-mono">{selectedRace.time}</div>
                 </div>
               </div>
+
+              {(() => {
+                  let bankerText = "";
+                  let isBanker = false;
+                  
+                  if (selectedRace && sortedHorses.length > 0 && !isLoadingPredictions && !isLoadingHorses) {
+                      const horsesWithTime = sortedHorses.filter(h => predictions[h.id]?.predictedSeconds);
+                      const missingCount = sortedHorses.length - horsesWithTime.length;
+                      const top1 = horsesWithTime[0];
+                      const top2 = horsesWithTime[1];
+
+                      if (sortedHorses.length < 4) {
+                          bankerText = "Riskli Koşu (Kayıt Az / Tahmin Zor)";
+                      } else if (missingCount >= 2) {
+                          bankerText = `Riskli Koşu (${missingCount} Atın Yeterli Verisi Yok, Kapalı Kutu)`;
+                      } else if (top1 && top2) {
+                          const p1 = predictions[top1.id];
+                          const p2 = predictions[top2.id];
+                          const margin = (p2.predictedSeconds || 0) - (p1.predictedSeconds || 0);
+                          
+                          if (p1.confidence < 70) {
+                              bankerText = `Riskli Koşu (AI İlk Elemana Güvenmiyor: %${p1.confidence})`;
+                          } else if (p1.relevantRacesCount < 2) {
+                              bankerText = "Riskli Koşu (İlk Elemanın Yarış Geçmişi Çok Az)";
+                          } else if (margin < 0.75) {
+                              bankerText = `Zor/Riskli Koşu (İlk İki At Arasındaki Seçim Çok Ufak: ${margin.toFixed(2)}s)`;
+                          } else {
+                              bankerText = `SİSTEM TEK ÖNERİSİ: ${top1.number} - ${top1.name} (Rakibine ${margin.toFixed(2)}sn Fark Attı)`;
+                              isBanker = true;
+                          }
+                      }
+                  }
+
+                  if (!bankerText) return null;
+
+                  return (
+                      <div className={`px-6 py-3 border-b flex items-center justify-between font-medium text-sm
+                          ${isBanker ? 'bg-emerald-950/40 border-emerald-900/50 text-emerald-300' : 'bg-rose-950/20 border-rose-900/30 text-rose-300'}
+                      `}>
+                          <div className="flex items-center gap-2">
+                              {isBanker ? <Trophy className="w-5 h-5 text-emerald-400" /> : <Activity className="w-5 h-5 text-rose-400" />}
+                              <span>{bankerText}</span>
+                          </div>
+                      </div>
+                  );
+              })()}
 
               <div className="p-0 overflow-x-auto">
                 <table className="w-full text-left border-collapse">
@@ -523,7 +680,24 @@ export default function Home() {
                                     <span title="Past relevant races analyzed by AI" className="text-zinc-500">
                                       {prediction.relevantRacesCount} Yarış
                                     </span>
+                                    {prediction.classQualityScore && (
+                                      <>
+                                        <span className="text-zinc-700">•</span>
+                                        <span title="Average quality of historical races (G1, G2 etc.)" className="text-cyan-400">
+                                          %{prediction.classQualityScore} Kalite
+                                        </span>
+                                      </>
+                                    )}
                                   </div>
+                                  {prediction.h2hAdjustments && prediction.h2hAdjustments.length > 0 && (
+                                    <div className="mt-1 flex flex-wrap justify-end gap-1">
+                                      {prediction.h2hAdjustments.map((h2h, i) => (
+                                        <span key={i} className={`text-[9px] px-1.5 py-0.5 rounded border ${h2h.adjustment < 0 ? 'bg-emerald-950/30 border-emerald-900/50 text-emerald-400' : 'bg-rose-950/30 border-rose-900/50 text-rose-400'}`} title={`H2H vs ${h2h.horseName}`}>
+                                          {h2h.adjustment < 0 ? '🏆' : '📉'} {h2h.horseName}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  )}
                                 </div>
                               ) : (
                                 <span className="text-zinc-600 outline outline-1 outline-zinc-800 px-3 py-1 rounded-full text-xs font-medium">Yetersiz Veri</span>

@@ -43,6 +43,8 @@ export interface PastRace {
     weight: number;
     trainer?: string;
     handicap?: number;
+    raceId?: string;    // New: Unique Race ID for H2H
+    raceClass?: string; // New: G1, KV-8, Maiden etc.
 }
 
 export async function getTodayLocations(date?: string): Promise<Location[]> {
@@ -304,6 +306,7 @@ export async function getHorseHistory(horseId: string): Promise<PastRace[]> {
                 const pastWeight = parseFloat(weightStr) || 0;
 
                 const trainer = $(tds[14]).text().trim();
+                const pastHandicap = parseInt($(tds[18]).text().trim(), 10) || 0; // Index 18 is typically the Horse's Quality/Handicap point
 
                 const timeStr = $(tds[5]).text().trim();
                 let time = '';
@@ -313,11 +316,13 @@ export async function getHorseHistory(horseId: string): Promise<PastRace[]> {
                     time = "Derecesiz";
                 }
 
-                const positionStr = $(tds[9]).text().trim();
+                const positionStr = $(tds[4]).text().trim(); // Index 4 is the Rank/Position
                 const position = parseInt(positionStr, 10) || 0;
 
-                const handicapStr = $(tds[16]).text().trim();
-                const handicap = parseInt(handicapStr, 10) || 0;
+                const raceClass = $(tds[13]).text().trim();
+                const resultsLink = $(tds[0]).find('a').attr('href') || '';
+                const raceIdMatch = resultsLink.match(/#(\d+)/);
+                const raceId = raceIdMatch ? raceIdMatch[1] : undefined;
 
                 if (time) {
                     history.push({
@@ -331,7 +336,9 @@ export async function getHorseHistory(horseId: string): Promise<PastRace[]> {
                         jockey,
                         weight: pastWeight,
                         trainer,
-                        handicap
+                        handicap: pastHandicap,
+                        raceId,
+                        raceClass
                     });
                 }
             }

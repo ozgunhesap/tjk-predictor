@@ -22,22 +22,7 @@ export async function GET(request: Request) {
 
     try {
         const history = await getHorseHistory(horseId);
-
-        let prediction = null;
-        if (distanceStr && trackType) {
-            const distance = parseInt(distanceStr, 10);
-            const weight = weightStr ? parseFloat(weightStr.replace(',', '.')) : undefined;
-            const draw = drawStr ? parseInt(drawStr, 10) : undefined;
-            const handicap = handicapStr ? parseInt(handicapStr, 10) : undefined;
-            try {
-                prediction = predictRaceTime(history, distance, trackType, targetDate || undefined, city || undefined, weight, undefined, jockey || undefined, sire || undefined, trainer || undefined, draw, handicap);
-                console.log(`[API Debug] Horse ${horseId} predicted:`, prediction);
-            } catch (e) {
-                console.error(`[API Debug] predictRaceTime crash!`, e);
-            }
-        }
-
-        return NextResponse.json({ history, prediction });
+        return NextResponse.json({ history });
     } catch (error) {
         console.error('API Error /horse:', error);
         return NextResponse.json({ error: 'Failed to fetch horse history' }, { status: 500 });

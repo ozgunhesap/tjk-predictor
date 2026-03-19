@@ -67,7 +67,9 @@ async function backtestDate(targetDate: string, cityToTest: string) {
                 horse.sire,
                 horse.trainer,
                 horse.draw ? parseInt(String(horse.draw)) : undefined,
-                horse.handicap ? parseInt(String(horse.handicap)) : undefined
+                horse.handicap ? parseInt(String(horse.handicap)) : undefined,
+                undefined,
+                race.name
             );
 
             if (pred && pred.predictedSeconds) {
