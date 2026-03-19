@@ -543,7 +543,14 @@ export function predictRaceTime(
     totalPaceModifierRatio = Math.max(0.985, Math.min(1.015, totalPaceModifierRatio));
 
     // Apply final modifier to predicted time
+    // NEW: Limit the total impact of these secondary heuristics to exactly +/- 1.0 seconds as requested.
+    const beforeHeuristics = predictedSeconds;
     predictedSeconds = predictedSeconds * totalPaceModifierRatio;
+    const heuristicImpact = predictedSeconds - beforeHeuristics;
+    
+    // Clamp the impact to +/- 1.0s
+    const clampedImpact = Math.max(-1.0, Math.min(1.0, heuristicImpact));
+    predictedSeconds = beforeHeuristics + clampedImpact;
 
     // --- 13. HEAD-TO-HEAD (H2H) RELATIONAL ANALYSIS ---
     const h2hAdjustments: { horseName: string, adjustment: number }[] = [];
