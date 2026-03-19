@@ -171,7 +171,9 @@ export function predictRaceTime(
             }
 
             if (requireExactTrack) {
-                return race.trackType === currentTrackType;
+                // Use normalized case-insensitive comparison for exact match
+                return (race.trackType?.toLowerCase() === currentTrackType?.toLowerCase()) || 
+                       (isGrassLike(race.trackType) && isGrassLike(currentTrackType) && race.trackType?.toLowerCase().includes('sentetik') === currentTrackType?.toLowerCase().includes('sentetik'));
             } else {
                 // strict bucket isolation
                 if (targetIsDirt) return isDirt(race.trackType);
